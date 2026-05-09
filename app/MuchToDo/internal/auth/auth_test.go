@@ -11,9 +11,6 @@ import (
 // Falls back to a default value if not set (useful for local testing).
 func getTestSecretKey() string {
 	secret := os.Getenv("JWT_SECRET_KEY")
-	// if secret == "" {
-	// 	secret = "test-secret-that-is-long-enough-for-hs256"
-	// }
 	return secret
 }
 
