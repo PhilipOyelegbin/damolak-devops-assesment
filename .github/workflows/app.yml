@@ -82,7 +82,7 @@ jobs:
       - name: Build and push Docker image to ECR (Staging)
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_STAGING }}
           IMAGE_TAG_SHA: staging-${{ github.sha }}
           IMAGE_TAG_LATEST: staging-latest
         run: |
@@ -97,7 +97,7 @@ jobs:
         env:
           INSTANCE_ID: ${{ secrets.STAGING_INSTANCE_ID }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_STAGING }}
           IMAGE_TAG: staging-latest
           AWS_REGION: ${{ secrets.AWS_REGION }}
           CONTAINER_NAME: muchtodo-api
@@ -120,7 +120,7 @@ jobs:
               "sudo docker pull ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
               "sudo docker stop ${CONTAINER_NAME} || true",
               "sudo docker rm ${CONTAINER_NAME} || true",
-              "sudo docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} --env-file /opt/muchtodo/.env -v /opt/muchtodo/.env:/app/.env ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+              "sudo docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} -v /opt/muchtodo/.env:/app/.env ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
               "echo 'Staging deployment completed successfully!'"
             ]
           }
@@ -132,7 +132,13 @@ jobs:
             --parameters file://commands.json \
             --region "$AWS_REGION"
 
-  deploy-production:
+      - name: Run Smoke Tests (Verify API is up)
+        run: |
+          echo "Running smoke test to verify API is up..."
+          curl --fail "${{ secrets.STAGING_INSTANCE_IP }}/health" || exit 1 
+          echo "Smoke test completed."
+
+  build-and-deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -167,7 +173,7 @@ jobs:
       - name: Build and push Docker image to ECR (Production)
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_PRODUCTION }}
           IMAGE_TAG_SHA: production-${{ github.sha }}
           IMAGE_TAG_LATEST: production-latest
         run: |
@@ -182,27 +188,43 @@ jobs:
         env:
           INSTANCE_ID: ${{ secrets.PRODUCTION_INSTANCE_ID }}
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_PRODUCTION }}
           IMAGE_TAG: production-latest
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          CONTAINER_NAME: muchtodo-api
+          CONTAINER_PORT: 8080
+          HOST_PORT: 80
         run: |
+          cat <<'EOF' > production.env
+          ${{ secrets.PRODUCTION_ENV_FILE }}
+          EOF
+          ENV_B64=$(base64 -w 0 production.env)
+
+          cat <<EOF > commands.json
+          {
+            "commands": [
+              "#!/bin/bash",
+              "set -e",
+              "mkdir -p /opt/muchtodo",
+              "echo ${ENV_B64} | base64 -d > /opt/muchtodo/.env",
+              "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}",
+              "sudo docker pull ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+              "sudo docker stop ${CONTAINER_NAME} || true",
+              "sudo docker rm ${CONTAINER_NAME} || true",
+              "sudo docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} -v /opt/muchtodo/.env:/app/.env ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+              "echo 'Production deployment completed successfully!'"
+            ]
+          }
+          EOF
+
           aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=[
-              "#!/bin/bash",
-              "set -e",
-              "export ECR_REGISTRY='$ECR_REGISTRY'",
-              "export ECR_REPOSITORY='$ECR_REPOSITORY'",
-              "export IMAGE_TAG='$IMAGE_TAG'",
-              "export CONTAINER_NAME='$CONTAINER_NAME'",
-              "export CONTAINER_PORT='$CONTAINER_PORT'",
-              "export HOST_PORT='$HOST_PORT'",
-              "mkdir -p /opt/muchtodo",
-              "echo '\''${{ secrets.PRODUCTION_ENV_FILE }}'\'' > /opt/muchtodo/.env",
-              "aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY",
-              "docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-              "docker stop $CONTAINER_NAME || true",
-              "docker rm $CONTAINER_NAME || true",
-              "docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $HOST_PORT:$CONTAINER_PORT --env-file /opt/muchtodo/.env $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-              "echo '\''Production deployment completed successfully!'\''"
-            ]'
+            --parameters file://commands.json \
+            --region "$AWS_REGION"
+
+      - name: Run Smoke Tests (Verify API is up)
+        run: |
+          echo "Running smoke test to verify API is up..."
+          curl --fail "${{ secrets.PRODUCTION_INSTANCE_IP }}/health" || exit 1 
+          echo "Smoke test completed."
