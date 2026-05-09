@@ -1,0 +1,205 @@
+name: MuchToDo API CI/CD Pipeline to AWS
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - "app/MuchToDo/**"
+      - ".github/workflows/app.yml"
+  pull_request:
+    branches: [staging, dev]
+    paths:
+      - "app/MuchToDo/**"
+      - ".github/workflows/app.yml"
+
+env:
+  APP_DIR: app/MuchToDo
+  GO_VERSION: "1.25.1"
+  CONTAINER_NAME: muchtodo-api
+  CONTAINER_PORT: "8080"
+  HOST_PORT: "80"
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request' && (github.base_ref == 'staging' || github.base_ref == 'dev')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: ${{ env.APP_DIR }}/go.sum
+
+      - name: Download dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: go mod download
+
+      # - name: Scan code for exposed secrets
+      #   uses: gitleaks/gitleaks-action@v2
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run unit tests
+        working-directory: ${{ env.APP_DIR }}
+        run: go test ./...
+
+      - name: Build API binary
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          mkdir -p ./bin
+          go build -o ./bin/much-to-do ./cmd/api/main.go
+
+  build-and-deploy-staging:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: ${{ env.APP_DIR }}/go.sum
+
+      - name: Download dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: go mod download
+
+      - name: Run tests
+        working-directory: ${{ env.APP_DIR }}
+        run: go test ./...
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image to ECR (Staging)
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          IMAGE_TAG_SHA: staging-${{ github.sha }}
+          IMAGE_TAG_LATEST: staging-latest
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_SHA \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_LATEST \
+            -f $APP_DIR/Dockerfile $APP_DIR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_SHA
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_LATEST
+
+      - name: Deploy to Staging Server via SSM
+        env:
+          INSTANCE_ID: ${{ secrets.STAGING_INSTANCE_ID }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          IMAGE_TAG: staging-latest
+        run: |
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "#!/bin/bash",
+              "set -e",
+              "export ECR_REGISTRY='$ECR_REGISTRY'",
+              "export ECR_REPOSITORY='$ECR_REPOSITORY'",
+              "export IMAGE_TAG='$IMAGE_TAG'",
+              "export CONTAINER_NAME='$CONTAINER_NAME'",
+              "export CONTAINER_PORT='$CONTAINER_PORT'",
+              "export HOST_PORT='$HOST_PORT'",
+              "mkdir -p /opt/muchtodo",
+              "echo '\''${{ secrets.STAGING_ENV_FILE }}'\'' > /opt/muchtodo/.env",
+              "aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY",
+              "docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "docker stop $CONTAINER_NAME || true",
+              "docker rm $CONTAINER_NAME || true",
+              "docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $HOST_PORT:$CONTAINER_PORT --env-file /opt/muchtodo/.env $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "echo '\''Staging deployment completed successfully!'\''"
+            ]'
+
+  deploy-production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: ${{ env.APP_DIR }}/go.sum
+
+      - name: Download dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: go mod download
+
+      - name: Run tests
+        working-directory: ${{ env.APP_DIR }}
+        run: go test ./...
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image to ECR (Production)
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          IMAGE_TAG_SHA: production-${{ github.sha }}
+          IMAGE_TAG_LATEST: production-latest
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_SHA \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_LATEST \
+            -f $APP_DIR/Dockerfile $APP_DIR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_SHA
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG_LATEST
+
+      - name: Deploy to Production Server via SSM
+        env:
+          INSTANCE_ID: ${{ secrets.PRODUCTION_INSTANCE_ID }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
+          IMAGE_TAG: production-latest
+        run: |
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "#!/bin/bash",
+              "set -e",
+              "export ECR_REGISTRY='$ECR_REGISTRY'",
+              "export ECR_REPOSITORY='$ECR_REPOSITORY'",
+              "export IMAGE_TAG='$IMAGE_TAG'",
+              "export CONTAINER_NAME='$CONTAINER_NAME'",
+              "export CONTAINER_PORT='$CONTAINER_PORT'",
+              "export HOST_PORT='$HOST_PORT'",
+              "mkdir -p /opt/muchtodo",
+              "echo '\''${{ secrets.PRODUCTION_ENV_FILE }}'\'' > /opt/muchtodo/.env",
+              "aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY",
+              "docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "docker stop $CONTAINER_NAME || true",
+              "docker rm $CONTAINER_NAME || true",
+              "docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $HOST_PORT:$CONTAINER_PORT --env-file /opt/muchtodo/.env $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
+              "echo '\''Production deployment completed successfully!'\''"
+            ]'
