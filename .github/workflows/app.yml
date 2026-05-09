@@ -104,28 +104,23 @@ jobs:
           CONTAINER_PORT: 8080
           HOST_PORT: 80
         run: |
-          # Encode env file safely (preserves newlines, quotes, everything)
-          ENV_B64=$(printf "%s" "${{ secrets.STAGING_ENV_FILE }}" | base64 -w 0)
+          cat <<'EOF' > staging.env
+          ${{ secrets.STAGING_ENV_FILE }}
+          EOF
+          ENV_B64=$(base64 -w 0 staging.env)
 
           cat <<EOF > commands.json
           {
             "commands": [
               "#!/bin/bash",
               "set -e",
-
               "mkdir -p /opt/muchtodo",
-
               "echo ${ENV_B64} | base64 -d > /opt/muchtodo/.env",
-
               "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}",
-
               "docker pull ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
-
               "docker stop ${CONTAINER_NAME} || true",
               "docker rm ${CONTAINER_NAME} || true",
-
               "docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} --env-file /opt/muchtodo/.env ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
-
               "echo 'Staging deployment completed successfully!'"
             ]
           }
