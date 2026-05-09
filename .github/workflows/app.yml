@@ -7,7 +7,7 @@ on:
       - "app/MuchToDo/**"
       - ".github/workflows/app.yml"
   pull_request:
-    branches: [staging, dev]
+    branches: [dev]
     paths:
       - "app/MuchToDo/**"
       - ".github/workflows/app.yml"
@@ -99,28 +99,43 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
           IMAGE_TAG: staging-latest
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          STAGING_ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
+          CONTAINER_NAME: muchtodo-api
+          CONTAINER_PORT: 8080
+          HOST_PORT: 80
         run: |
+          cat <<EOF > commands.json
+          {
+            "commands": [
+              "#!/bin/bash",
+              "set -e",
+
+              "mkdir -p /opt/muchtodo",
+
+              "cat <<'ENVEOF' > /opt/muchtodo/.env",
+              "${STAGING_ENV_FILE}",
+              "ENVEOF",
+
+              "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}",
+
+              "docker pull ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+
+              "docker stop ${CONTAINER_NAME} || true",
+              "docker rm ${CONTAINER_NAME} || true",
+
+              "docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} --env-file /opt/muchtodo/.env ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+
+              "echo 'Staging deployment completed successfully!'"
+            ]
+          }
+          EOF
+
           aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=[
-              "#!/bin/bash",
-              "set -e",
-              "export ECR_REGISTRY='$ECR_REGISTRY'",
-              "export ECR_REPOSITORY='$ECR_REPOSITORY'",
-              "export IMAGE_TAG='$IMAGE_TAG'",
-              "export CONTAINER_NAME='$CONTAINER_NAME'",
-              "export CONTAINER_PORT='$CONTAINER_PORT'",
-              "export HOST_PORT='$HOST_PORT'",
-              "mkdir -p /opt/muchtodo",
-              "echo '\''${{ secrets.STAGING_ENV_FILE }}'\'' > /opt/muchtodo/.env",
-              "aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin $ECR_REGISTRY",
-              "docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-              "docker stop $CONTAINER_NAME || true",
-              "docker rm $CONTAINER_NAME || true",
-              "docker run -d --name $CONTAINER_NAME --restart unless-stopped -p $HOST_PORT:$CONTAINER_PORT --env-file /opt/muchtodo/.env $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG",
-              "echo '\''Staging deployment completed successfully!'\''"
-            ]'
+            --parameters file://commands.json \
+            --region "$AWS_REGION"
 
   deploy-production:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
