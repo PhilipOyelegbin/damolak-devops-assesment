@@ -100,11 +100,13 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_BACKEND }}
           IMAGE_TAG: staging-latest
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          STAGING_ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
           CONTAINER_NAME: muchtodo-api
           CONTAINER_PORT: 8080
           HOST_PORT: 80
         run: |
+          # Encode env file safely (preserves newlines, quotes, everything)
+          ENV_B64=$(printf "%s" "${{ secrets.STAGING_ENV_FILE }}" | base64 -w 0)
+
           cat <<EOF > commands.json
           {
             "commands": [
@@ -113,9 +115,7 @@ jobs:
 
               "mkdir -p /opt/muchtodo",
 
-              "cat <<'ENVEOF' > /opt/muchtodo/.env",
-              "${STAGING_ENV_FILE}",
-              "ENVEOF",
+              "echo ${ENV_B64} | base64 -d > /opt/muchtodo/.env",
 
               "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}",
 
