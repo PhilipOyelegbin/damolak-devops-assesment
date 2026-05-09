@@ -120,7 +120,7 @@ jobs:
               "sudo docker pull ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
               "sudo docker stop ${CONTAINER_NAME} || true",
               "sudo docker rm ${CONTAINER_NAME} || true",
-              "sudo docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} --env-file /opt/muchtodo/.env ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+              "sudo docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} --env-file /opt/muchtodo/.env -v /opt/muchtodo/.env:/app/.env ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
               "echo 'Staging deployment completed successfully!'"
             ]
           }
