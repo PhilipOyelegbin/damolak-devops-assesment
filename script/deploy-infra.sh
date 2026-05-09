@@ -12,11 +12,28 @@ if [ "$1" != "staging" ] && [ "$1" != "production" ] && [ "$1" != "remote" ]; th
 fi
 
 if [ "$1" == "remote" ]; then
-    echo ">>> Deploying remote state..."
-    cd "$PROJECT_ROOT/infra/remote-state"
-    terraform init
-    terraform validate
-    terraform apply -auto-approve
+    echo ">>> Deploying remote state with AWS CLI..."
+    aws s3api create-bucket \
+        --bucket damolak-assessment-remote-state \
+        --region eu-west-2 \
+        --create-bucket-configuration LocationConstraint=eu-west-2
+
+    aws s3api put-public-access-block \
+        --bucket damolak-assessment-remote-state \
+        --public-access-block-configuration \
+        "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+
+    aws s3api put-bucket-encryption \
+        --bucket damolak-assessment-remote-state \
+        --server-side-encryption-configuration '{
+            "Rules": [
+                {
+                    "ApplyServerSideEncryptionByDefault": {
+                        "SSEAlgorithm": "AES256"
+                    }
+                }
+            ]
+        }'
     echo ">>> Remote state deployed successfully."
 fi
 
