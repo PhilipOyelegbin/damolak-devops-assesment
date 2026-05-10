@@ -31,7 +31,7 @@ GitHub push / pull request
   -> Golang app tests and build
   -> Docker image build from app/MuchToDo/Dockerfile
   -> Push image to AWS ECR
-  -> Deploy to EC2 staging/production via AWS Systems Manager
+  -> Deploy to EC2 staging/production via AWS Systems Manager and save output data to github secret
   -> EC2 pulls image from ECR and runs the container
   -> Logs and metrics go to CloudWatch
 ```
@@ -56,6 +56,8 @@ GitHub push / pull request
 - Terraform installed locally.
 - AWS CLI configured with credentials and region.
 - GitHub repository secrets configured for the pipeline.
+
+> PS: Ensure you add the `GH_PAT` variable with appropriate permissions before deployment
 
 ### 2. Deploy the remote state stack
 
@@ -237,5 +239,6 @@ damolak-devops-assesment/
 5. The image is pushed to ECR.
 6. SSM runs the remote deployment script on EC2.
 7. CloudWatch captures logs and alarms.
+8. The application is accessible via `http://<server-ip>/swagger/index.html`
 
 ---

@@ -18,10 +18,10 @@ locals {
 }
 
 resource "aws_sns_topic" "alerts" {
-  name = "${var.project_name}-alerts"
+  name = "${var.project_name}-${var.environment}-alerts"
 
   tags = merge(local.common_tags, {
-    Name = "${var.project_name}-alerts"
+    Name = "${var.project_name}-${var.environment}-alerts"
   })
 }
 
@@ -33,11 +33,11 @@ resource "aws_sns_topic_subscription" "email" {
 }
 
 resource "aws_cloudwatch_log_group" "monitoring" {
-  name              = "/${var.project_name}/backend/monitoring"
+  name              = "/${var.project_name}-${var.environment}/monitoring"
   retention_in_days = var.log_retention_days
 
   tags = merge(local.common_tags, {
-    Name = "${var.project_name}-monitoring-logs"
+    Name = "${var.project_name}-${var.environment}-monitoring-logs"
   })
 }
 
