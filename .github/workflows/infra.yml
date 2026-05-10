@@ -1,0 +1,255 @@
+name: Infrastructure CI/CD Pipeline to AWS
+
+on:
+  push:
+    branches: [infra/remote, infra/staging, infra/production]
+    paths:
+      - "infra/modules/**"
+      - "infra/environments/staging/**"
+      - "infra/environments/production/**"
+  pull_request:
+    branches: [infra/remote, infra/staging, infra/production]
+    paths:
+      - "infra/modules/**"
+      - "infra/environments/staging/**"
+      - "infra/environments/production/**"
+
+jobs:
+  setup-remote-state:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/infra/remote'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Remote State
+        run: ./script/deploy-infra.sh remote
+
+  plan-staging:
+    if: github.event_name == 'pull_request' && github.base_ref == 'infra/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Terraform Plan for Staging
+        run: echo "Changes detected in terraform, running plan..."
+
+      - name: Set up terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.3"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Create a tfvars file
+        run: |
+          cat <<'EOF' > infra/environments/staging/terraform.tfvars
+          project_name        = "damolak"
+          project_tag         = "damolak"
+          project_environment = "Staging"
+          region              = "eu-west-2"
+          vpc_cidr            = "10.8.1.0/24"
+          instance_type       = "t3.micro"
+          alert_email         = "contact@philipoyelegbin.com.ng"
+          enable_dashboard    = true
+          dashboard_name      = "damolak-dash-staging"
+          log_retention_days  = 30
+          EOF
+
+      - name: Initialize Terraform
+        run: terraform init
+        working-directory: infra/environments/staging
+
+      - name: Validate Terraform
+        run: terraform validate
+        working-directory: infra/environments/staging
+
+      - name: Run Terraform Plan
+        run: terraform plan
+        working-directory: infra/environments/staging
+
+  plan-production:
+    if: github.event_name == 'pull_request' && github.base_ref == 'infra/production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Terraform Plan for Production
+        run: echo "Changes detected in terraform, running plan..."
+
+      - name: Set up terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.3"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Create a tfvars file
+        run: |
+          cat <<'EOF' > infra/environments/production/terraform.tfvars
+          project_name        = "damolak"
+          project_tag         = "damolak"
+          project_environment = "Production"
+          region              = "eu-west-2"
+          vpc_cidr            = "10.8.3.0/24"
+          instance_type       = "t3.micro"
+          alert_email         = "contact@philipoyelegbin.com.ng"
+          enable_dashboard    = true
+          dashboard_name      = "damolak-dash-production"
+          log_retention_days  = 30
+          EOF
+
+      - name: Initialize Terraform
+        run: terraform init
+        working-directory: infra/environments/production
+
+      - name: Validate Terraform
+        run: terraform validate
+        working-directory: infra/environments/production
+
+      - name: Run Terraform Plan
+        run: terraform plan
+        working-directory: infra/environments/production
+
+  apply-staging:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/infra/staging'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Terraform Apply For Staging
+        run: echo "Changes detected in terraform, running apply..."
+
+      - name: Set up terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.3"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Create a tfvars file
+        run: |
+          cat <<'EOF' > infra/environments/staging/terraform.tfvars
+          project_name        = "damolak"
+          project_tag         = "damolak"
+          project_environment = "Staging"
+          region              = "eu-west-2"
+          vpc_cidr            = "10.8.1.0/24"
+          instance_type       = "t3.micro"
+          alert_email         = "contact@philipoyelegbin.com.ng"
+          enable_dashboard    = true
+          dashboard_name      = "damolak-dash-staging"
+          log_retention_days  = 30
+          EOF
+
+      - name: Deploy Staging Infrastructure
+        run: ./script/deploy-infra.sh staging
+
+      - name: Extract Outputs
+        id: tf_outputs
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Use -json to safely parse complex values
+          terraform output -json > tf-outputs.json
+
+          # Extract values from tf-outputs.json
+          STAGING_INSTANCE_IP=$(jq -r '.server_ip.value' tf-outputs.json)
+          STAGING_INSTANCE_ID=$(jq -r '.instance_id.value' tf-outputs.json)
+          ECR_REPOSITORY_STAGING=$(jq -r '.ecr_repository_name.value' tf-outputs.json)
+
+          # Persist as Repository Secrets
+          gh secret set STAGING_INSTANCE_IP --body "$STAGING_INSTANCE_IP"
+          gh secret set STAGING_INSTANCE_ID --body "$STAGING_INSTANCE_ID"
+          gh secret set ECR_REPOSITORY_STAGING --body "$ECR_REPOSITORY_STAGING"
+        working-directory: ./infra/environments/staging/
+        shell: bash
+
+  apply-production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/infra/production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Terraform Apply For Production
+        run: echo "Changes detected in terraform, running apply..."
+
+      - name: Set up terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.3"
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Create a tfvars file
+        run: |
+          cat <<'EOF' > infra/environments/production/terraform.tfvars
+          project_name        = "damolak"
+          project_tag         = "damolak"
+          project_environment = "Production"
+          region              = "eu-west-2"
+          vpc_cidr            = "10.8.3.0/24"
+          instance_type       = "t3.micro"
+          alert_email         = "contact@philipoyelegbin.com.ng"
+          enable_dashboard    = true
+          dashboard_name      = "damolak-dash-production"
+          log_retention_days  = 30
+          EOF
+
+      - name: Deploy Production Infrastructure
+        run: ./script/deploy-infra.sh production
+
+      - name: Extract Outputs
+        id: tf_outputs
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # Use -json to safely parse complex values
+          terraform output -json > tf-outputs.json
+
+          # Extract values from tf-outputs.json
+          PRODUCTION_INSTANCE_IP=$(jq -r '.server_ip.value' tf-outputs.json)
+          PRODUCTION_INSTANCE_ID=$(jq -r '.instance_id.value' tf-outputs.json)
+          ECR_REPOSITORY_PRODUCTION=$(jq -r '.ecr_repository_name.value' tf-outputs.json)
+
+          # Persist as Repository Secrets
+          gh secret set PRODUCTION_INSTANCE_IP --body "$PRODUCTION_INSTANCE_IP"
+          gh secret set PRODUCTION_INSTANCE_ID --body "$PRODUCTION_INSTANCE_ID"
+          gh secret set ECR_REPOSITORY_PRODUCTION --body "$ECR_REPOSITORY_PRODUCTION"
+        working-directory: ./infra/environments/production/
+        shell: bash

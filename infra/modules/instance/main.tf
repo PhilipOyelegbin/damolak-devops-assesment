@@ -81,12 +81,11 @@ resource "aws_instance" "app_server" {
     volume_size = var.root_volume_size_gb
     volume_type = "gp3"
   }
-
-  user_data = templatefile("${path.module}/userdata.sh", {
+  user_data_base64 = base64encode(templatefile("${path.module}/userdata.sh", {
     project_name   = var.project_name
     environment    = var.environment
     log_group_name = aws_cloudwatch_log_group.app.name
-  })
+  }))
 
   tags = {
     Name        = "${var.project_name}-${var.environment}-app-server"
