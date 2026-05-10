@@ -135,7 +135,8 @@ jobs:
       - name: Run Smoke Tests (Verify API is up)
         run: |
           echo "Running smoke test to verify API is up..."
-          curl --fail "${{ secrets.STAGING_INSTANCE_IP }}/health" || exit 1 
+          sleep 30 # Wait for the application to start
+          curl --fail "http://${{ secrets.STAGING_INSTANCE_IP }}/health" || exit 1 
           echo "Smoke test completed."
 
   build-and-deploy-production:
@@ -226,5 +227,6 @@ jobs:
       - name: Run Smoke Tests (Verify API is up)
         run: |
           echo "Running smoke test to verify API is up..."
+          sleep 30 # Wait for the application to start
           curl --fail "${{ secrets.PRODUCTION_INSTANCE_IP }}/health" || exit 1 
           echo "Smoke test completed."
