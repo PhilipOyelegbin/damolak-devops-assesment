@@ -28,10 +28,8 @@ if [ "$1" == "production" ]; then
 fi
 
 if [ "$1" == "remote" ]; then
-  echo ">>> Destroying remote state..."
+  echo ">>> Destroying remote state with AWS CLI..."
   aws s3 rm s3://damolak-assessment-remote-state --recursive
-  cd "$PROJECT_ROOT/infra/remote-state"
-  terraform init
-  terraform destroy -auto-approve
+  aws s3 rb s3://damolak-assessment-remote-state --force
   echo ">>> Remote state destroyed successfully."
 fi
