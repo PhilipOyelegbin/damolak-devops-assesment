@@ -31,6 +31,7 @@ module "monitoring" {
   source             = "../../modules/monitoring"
   project_name       = var.project_name
   region             = var.region
+  environment        = "staging"
   vpc_id             = module.network.vpc_id
   vpc_cidr_blocks    = [module.network.vpc_cidr]
   backend_sg_ids     = [module.network.backend_sg_id]
